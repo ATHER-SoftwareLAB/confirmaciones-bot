@@ -2,6 +2,7 @@ const { default: makeWASocket, useMultiFileAuthState, DisconnectReason, fetchLat
 const { createClient } = require('@supabase/supabase-js')
 const express = require('express')
 const qrcode = require('qrcode-terminal')
+const QRCode = require('qrcode')
 const pino = require('pino')
 const ws = require('ws')
 
@@ -17,6 +18,7 @@ const app = express()
 app.use(express.json())
 
 let sock = null
+let lastQR = null
 
 const PALABRAS_SI = ['si', 'sí', 'yes', '1', 'confirmo', 'ahi estare', 'ahí estaré', 'voy', 'asistiré', 'asistire', 'claro', 'por supuesto', '✅']
 const PALABRAS_NO = ['no', '2', 'no podre', 'no podré', 'no puedo', '❌']
@@ -45,17 +47,21 @@ async function connectWA() {
 
   sock.ev.on('connection.update', ({ connection, lastDisconnect, qr }) => {
     if (qr) {
-      console.log('\n══ Escanea este QR con WhatsApp ══\n')
+      lastQR = qr
+      console.log('QR listo — visita /qr en tu navegador')
       qrcode.generate(qr, { small: true })
     }
-    if (connection === 'open') console.log('✓ WhatsApp conectado')
+    if (connection === 'open') {
+      lastQR = null
+      console.log('✓ WhatsApp conectado')
+    }
     if (connection === 'close') {
       const code = lastDisconnect?.error?.output?.statusCode
       if (code !== DisconnectReason.loggedOut) {
         console.log('Reconectando...')
-        connectWA()
+        setTimeout(connectWA, 3000)
       } else {
-        console.log('Sesión cerrada. Escanea QR de nuevo.')
+        console.log('Sesión cerrada. Visita /qr para reconectar.')
       }
     }
   })
@@ -87,8 +93,17 @@ async function connectWA() {
   })
 }
 
-// ─── API ─────────────────────────────────────────────────
-app.get('/', (_, res) => res.json({ status: 'ok', whatsapp: sock?.user ? 'connected' : 'connecting' }))
+// ─── ENDPOINTS ───────────────────────────────────────────
+app.get('/', (_, res) => res.json({
+  status: 'ok',
+  whatsapp: sock?.user ? 'connected' : 'connecting'
+}))
+
+app.get('/qr', async (_, res) => {
+  if (!lastQR) return res.send('<html><body style="background:#111;color:#fff;font-family:sans-serif;display:flex;align-items:center;justify-content:center;height:100vh;margin:0"><h2>✓ Ya conectado o esperando QR...</h2></body></html>')
+  const img = await QRCode.toDataURL(lastQR)
+  res.send(`<html><body style="background:#111;display:flex;flex-direction:column;align-items:center;justify-content:center;height:100vh;margin:0"><p style="color:#fff;font-family:sans-serif;margin-bottom:16px">Escanea con WhatsApp → Dispositivos vinculados</p><img src="${img}" style="border-radius:12px"/></body></html>`)
+})
 
 app.post('/blast', async (req, res) => {
   const { tipo } = req.body
