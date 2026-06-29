@@ -1,14 +1,20 @@
 const { default: makeWASocket, useMultiFileAuthState, DisconnectReason, fetchLatestBaileysVersion } = require('@whiskeysockets/baileys')
 const { createClient } = require('@supabase/supabase-js')
 const express = require('express')
-const qrcode = require('qrcode-terminal')
 const QRCode = require('qrcode')
 const pino = require('pino')
 const ws = require('ws')
 
+// ─── CONFIG ───────────────────────────────────────────────
 const SUPABASE_URL = process.env.SUPABASE_URL
 const SUPABASE_KEY = process.env.SUPABASE_KEY
 const PORT = process.env.PORT || 3000
+const SESSION_PATH = process.env.SESSION_PATH || './session'
+
+if (!SUPABASE_URL || !SUPABASE_KEY) {
+  console.error('❌ Faltan variables de entorno SUPABASE_URL y SUPABASE_KEY')
+  process.exit(1)
+}
 
 const supabase = createClient(SUPABASE_URL, SUPABASE_KEY, {
   realtime: { transport: ws }
@@ -19,9 +25,11 @@ app.use(express.json())
 
 let sock = null
 let lastQR = null
+let isConnected = false
+let reconnectTimer = null
 
-const PALABRAS_SI = ['si', 'sí', 'yes', '1', 'confirmo', 'ahi estare', 'ahí estaré', 'voy', 'asistiré', 'asistire', 'claro', 'por supuesto', '✅']
-const PALABRAS_NO = ['no', '2', 'no podre', 'no podré', 'no puedo', '❌']
+const PALABRAS_SI = ['si', 'sí', 'yes', '1', 'confirmo', 'ahi estare', 'ahí estaré', 'voy', 'asistire', 'asistiré', 'claro', 'por supuesto', '✅']
+const PALABRAS_NO = ['no', '2', 'no podre', 'no podré', 'no puedo', 'no asistire', '❌']
 
 const detectar = (texto) => {
   const t = texto.toLowerCase().trim()
@@ -32,117 +40,171 @@ const detectar = (texto) => {
 
 const delay = (ms) => new Promise(r => setTimeout(r, ms))
 
+// ─── WHATSAPP ─────────────────────────────────────────────
 async function connectWA() {
-  const { state, saveCreds } = await useMultiFileAuthState('./session')
-  const { version } = await fetchLatestBaileysVersion()
+  try {
+    const { state, saveCreds } = await useMultiFileAuthState(SESSION_PATH)
+    const { version } = await fetchLatestBaileysVersion()
 
-  sock = makeWASocket({
-    version,
-    auth: state,
-    logger: pino({ level: 'silent' }),
-    printQRInTerminal: true,
-  })
+    sock = makeWASocket({
+      version,
+      auth: state,
+      logger: pino({ level: 'silent' }),
+      printQRInTerminal: false,
+      browser: ['Bot Confirmaciones', 'Chrome', '1.0.0'],
+    })
 
-  sock.ev.on('creds.update', saveCreds)
+    sock.ev.on('creds.update', saveCreds)
 
-  sock.ev.on('connection.update', ({ connection, lastDisconnect, qr }) => {
-    if (qr) {
-      lastQR = qr
-      console.log('QR listo — visita /qr en tu navegador')
-      qrcode.generate(qr, { small: true })
-    }
-    if (connection === 'open') {
-      lastQR = null
-      console.log('✓ WhatsApp conectado')
-    }
-    if (connection === 'close') {
-      const code = lastDisconnect?.error?.output?.statusCode
-      if (code !== DisconnectReason.loggedOut) {
-        console.log('Reconectando...')
-        setTimeout(connectWA, 3000)
-      } else {
-        console.log('Sesión cerrada. Visita /qr para reconectar.')
+    sock.ev.on('connection.update', ({ connection, lastDisconnect, qr }) => {
+      if (qr) {
+        lastQR = qr
+        isConnected = false
+        console.log('📱 QR listo — visita /qr en tu navegador para escanear')
       }
-    }
-  })
+      if (connection === 'open') {
+        lastQR = null
+        isConnected = true
+        if (reconnectTimer) { clearTimeout(reconnectTimer); reconnectTimer = null }
+        console.log('✓ WhatsApp conectado como', sock.user?.name || sock.user?.id)
+      }
+      if (connection === 'close') {
+        isConnected = false
+        const code = lastDisconnect?.error?.output?.statusCode
+        console.log('Conexión cerrada, código:', code)
+        if (code === DisconnectReason.loggedOut) {
+          console.log('⚠️  Sesión cerrada — visita /qr para reconectar')
+        } else {
+          console.log('Reconectando en 5s...')
+          reconnectTimer = setTimeout(connectWA, 5000)
+        }
+      }
+    })
 
-  sock.ev.on('messages.upsert', async ({ messages, type }) => {
-    if (type !== 'notify') return
-    for (const msg of messages) {
-      if (msg.key.fromMe || msg.key.remoteJid?.includes('@g.us')) continue
-      const texto = msg.message?.conversation || msg.message?.extendedTextMessage?.text || ''
-      if (!texto) continue
-      const numero = msg.key.remoteJid.replace('@s.whatsapp.net', '')
-      console.log(`📩 ${numero}: "${texto}"`)
+    sock.ev.on('messages.upsert', async ({ messages, type }) => {
+      if (type !== 'notify') return
+      for (const msg of messages) {
+        try {
+          if (msg.key.fromMe || msg.key.remoteJid?.includes('@g.us')) continue
+          const texto = msg.message?.conversation || msg.message?.extendedTextMessage?.text || ''
+          if (!texto) continue
 
-      const { data: inv } = await supabase.from('invitados').select('*').eq('telefono', numero).maybeSingle()
-      if (!inv || !inv.mensaje2_enviado || inv.estado !== 'pendiente') continue
+          const numero = msg.key.remoteJid.replace('@s.whatsapp.net', '')
+          console.log(`📩 ${numero}: "${texto}"`)
 
-      const estado = detectar(texto)
-      if (!estado) continue
+          const { data: inv } = await supabase
+            .from('invitados').select('*').eq('telefono', numero).maybeSingle()
 
-      await supabase.from('invitados').update({ estado }).eq('id', inv.id)
-      console.log(`  ✓ ${inv.nombre} → ${estado}`)
+          if (!inv || !inv.mensaje2_enviado || inv.estado !== 'pendiente') continue
 
-      const respuesta = estado === 'confirmado'
-        ? `¡Perfecto ${inv.nombre}! 🎉 Tu asistencia ha sido confirmada. ¡Te esperamos!`
-        : `Entendido ${inv.nombre}, lamentamos que no puedas asistir. ¡Gracias por avisarnos!`
+          const estado = detectar(texto)
+          if (!estado) { console.log('  → Respuesta no reconocida'); continue }
 
-      await sock.sendMessage(msg.key.remoteJid, { text: respuesta })
-    }
-  })
+          await supabase.from('invitados').update({ estado }).eq('id', inv.id)
+          console.log(`  ✓ ${inv.nombre} → ${estado}`)
+
+          const respuesta = estado === 'confirmado'
+            ? `¡Perfecto ${inv.nombre}! 🎉 Tu asistencia ha sido confirmada. ¡Te esperamos!`
+            : `Entendido ${inv.nombre}, lamentamos que no puedas asistir. ¡Gracias por avisarnos!`
+
+          await sock.sendMessage(msg.key.remoteJid, { text: respuesta })
+        } catch (e) {
+          console.error('Error procesando mensaje:', e.message)
+        }
+      }
+    })
+
+  } catch (e) {
+    console.error('Error conectando WhatsApp:', e.message)
+    console.log('Reintentando en 10s...')
+    setTimeout(connectWA, 10000)
+  }
 }
 
-// ─── ENDPOINTS ───────────────────────────────────────────
-app.get('/', (_, res) => res.json({
-  status: 'ok',
-  whatsapp: sock?.user ? 'connected' : 'connecting'
-}))
+// ─── ENDPOINTS ────────────────────────────────────────────
+app.get('/', (_, res) => {
+  res.json({ status: 'ok', whatsapp: isConnected ? 'connected' : lastQR ? 'qr_pending' : 'connecting' })
+})
 
 app.get('/qr', async (_, res) => {
-  if (!lastQR) return res.send('<html><body style="background:#111;color:#fff;font-family:sans-serif;display:flex;align-items:center;justify-content:center;height:100vh;margin:0"><h2>✓ Ya conectado o esperando QR...</h2></body></html>')
-  const img = await QRCode.toDataURL(lastQR)
-  res.send(`<html><body style="background:#111;display:flex;flex-direction:column;align-items:center;justify-content:center;height:100vh;margin:0"><p style="color:#fff;font-family:sans-serif;margin-bottom:16px">Escanea con WhatsApp → Dispositivos vinculados</p><img src="${img}" style="border-radius:12px"/></body></html>`)
+  if (isConnected) {
+    return res.send(`
+      <html><body style="background:#111;color:#4ade80;font-family:sans-serif;display:flex;align-items:center;justify-content:center;height:100vh;margin:0;flex-direction:column">
+        <div style="font-size:48px">✓</div>
+        <h2>WhatsApp conectado</h2>
+        <p style="color:#888">El bot está activo y escuchando mensajes</p>
+      </body></html>
+    `)
+  }
+  if (!lastQR) {
+    return res.send(`
+      <html><head><meta http-equiv="refresh" content="3"></head>
+      <body style="background:#111;color:#fff;font-family:sans-serif;display:flex;align-items:center;justify-content:center;height:100vh;margin:0;flex-direction:column">
+        <h2>⏳ Generando QR...</h2>
+        <p style="color:#888">Esta página se recarga automáticamente</p>
+      </body></html>
+    `)
+  }
+  const img = await QRCode.toDataURL(lastQR, { width: 300 })
+  res.send(`
+    <html><body style="background:#111;display:flex;flex-direction:column;align-items:center;justify-content:center;height:100vh;margin:0">
+      <p style="color:#fff;font-family:sans-serif;margin-bottom:16px;font-size:16px">
+        📱 WhatsApp → Dispositivos vinculados → Vincular dispositivo
+      </p>
+      <img src="${img}" style="border-radius:12px;border:3px solid #333"/>
+      <p style="color:#666;font-family:sans-serif;margin-top:12px;font-size:13px">
+        El QR expira en ~20 segundos. Si expira, recarga la página.
+      </p>
+    </body></html>
+  `)
 })
 
 app.post('/blast', async (req, res) => {
+  if (!isConnected) return res.status(503).json({ error: 'WhatsApp no conectado. Visita /qr primero.' })
   const { tipo } = req.body
-  if (!tipo) return res.status(400).json({ error: 'Falta tipo' })
-  res.json({ ok: true })
+  if (!tipo) return res.status(400).json({ error: 'Falta tipo (mensaje1 o mensaje2)' })
+  res.json({ ok: true, message: `Blast ${tipo} iniciado` })
 
   ;(async () => {
-    const { data: msg } = await supabase.from('mensajes').select('*').eq('tipo', tipo).maybeSingle()
-    if (!msg) return console.error('No hay mensaje para', tipo)
+    try {
+      const { data: msg } = await supabase.from('mensajes').select('*').eq('tipo', tipo).maybeSingle()
+      if (!msg) return console.error('❌ No hay mensaje configurado para', tipo)
 
-    const campo = tipo === 'mensaje1' ? 'mensaje1_enviado' : 'mensaje2_enviado'
-    const { data: invitados } = await supabase.from('invitados').select('*').eq(campo, false).order('nombre')
-    if (!invitados?.length) return console.log('Sin pendientes')
+      const campo = tipo === 'mensaje1' ? 'mensaje1_enviado' : 'mensaje2_enviado'
+      const { data: invitados } = await supabase.from('invitados').select('*').eq(campo, false).order('nombre')
+      if (!invitados?.length) return console.log('Sin invitados pendientes para', tipo)
 
-    console.log(`📤 Blast ${tipo} → ${invitados.length} invitados`)
+      console.log(`📤 Iniciando blast ${tipo} → ${invitados.length} invitados`)
 
-    for (let i = 0; i < invitados.length; i++) {
-      const inv = invitados[i]
-      const texto = msg.texto.replace(/\{nombre\}/g, inv.nombre)
-      const jid = `${inv.telefono}@s.whatsapp.net`
+      for (let i = 0; i < invitados.length; i++) {
+        const inv = invitados[i]
+        const texto = msg.texto.replace(/\{nombre\}/g, inv.nombre)
+        const jid = `${inv.telefono}@s.whatsapp.net`
 
-      try {
-        if (msg.imagen_url && tipo === 'mensaje1') {
-          await sock.sendMessage(jid, { image: { url: msg.imagen_url }, caption: texto })
-        } else {
-          const textoFinal = tipo === 'mensaje2' ? `${texto}\n\n${msg.boton_si}\n${msg.boton_no}` : texto
-          await sock.sendMessage(jid, { text: textoFinal })
+        try {
+          if (msg.imagen_url && tipo === 'mensaje1') {
+            await sock.sendMessage(jid, { image: { url: msg.imagen_url }, caption: texto })
+          } else {
+            const textoFinal = tipo === 'mensaje2'
+              ? `${texto}\n\n${msg.boton_si}\n${msg.boton_no}`
+              : texto
+            await sock.sendMessage(jid, { text: textoFinal })
+          }
+          await supabase.from('invitados').update({ [campo]: true }).eq('id', inv.id)
+          console.log(`  ✓ ${i + 1}/${invitados.length} — ${inv.nombre}`)
+        } catch (e) {
+          console.error(`  ✗ Error con ${inv.nombre}:`, e.message)
         }
-        await supabase.from('invitados').update({ [campo]: true }).eq('id', inv.id)
-        console.log(`  ✓ ${i+1}/${invitados.length} ${inv.nombre}`)
-      } catch (e) {
-        console.error(`  ✗ ${inv.nombre}:`, e.message)
-      }
 
-      if (i < invitados.length - 1) await delay(3000)
+        if (i < invitados.length - 1) await delay(3500)
+      }
+      console.log(`✅ Blast ${tipo} completado`)
+    } catch (e) {
+      console.error('Error en blast:', e.message)
     }
-    console.log(`✓ Blast ${tipo} completado`)
   })()
 })
 
+// ─── START ────────────────────────────────────────────────
 app.listen(PORT, () => console.log(`✓ API en puerto ${PORT}`))
 connectWA()

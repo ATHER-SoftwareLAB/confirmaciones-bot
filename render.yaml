@@ -1,0 +1,19 @@
+services:
+  - type: web
+    name: confirmaciones-bot
+    runtime: node
+    buildCommand: npm install
+    startCommand: node index.js
+    envVars:
+      - key: NODE_VERSION
+        value: 20.18.1
+      - key: SESSION_PATH
+        value: /data/session
+      - key: SUPABASE_URL
+        sync: false
+      - key: SUPABASE_KEY
+        sync: false
+    disk:
+      name: session-disk
+      mountPath: /data
+      sizeGB: 1
