@@ -4,6 +4,8 @@ const express = require('express')
 const QRCode = require('qrcode')
 const pino = require('pino')
 const ws = require('ws')
+const https = require('https')
+const http = require('http')
 
 const SUPABASE_URL = process.env.SUPABASE_URL
 const SUPABASE_KEY = process.env.SUPABASE_KEY
@@ -22,11 +24,12 @@ const supabase = createClient(SUPABASE_URL, SUPABASE_KEY, {
 const app = express()
 app.use(express.json())
 
-// CORS
+// CORS — permite cualquier origen
 app.use((req, res, next) => {
-  res.header('Access-Control-Allow-Origin', '*')
-  res.header('Access-Control-Allow-Headers', 'Content-Type')
-  res.header('Access-Control-Allow-Methods', 'GET, POST, OPTIONS')
+  res.setHeader('Access-Control-Allow-Origin', '*')
+  res.setHeader('Access-Control-Allow-Methods', 'GET, POST, OPTIONS')
+  res.setHeader('Access-Control-Allow-Headers', '*')
+  res.setHeader('Content-Security-Policy', '')
   if (req.method === 'OPTIONS') return res.sendStatus(200)
   next()
 })
@@ -136,7 +139,7 @@ app.get('/qr', async (_, res) => {
     return res.send(`<html><head><meta http-equiv="refresh" content="3"></head><body style="background:#111;color:#fff;font-family:sans-serif;display:flex;align-items:center;justify-content:center;height:100vh;margin:0;flex-direction:column"><h2>⏳ Generando QR...</h2><p style="color:#888">Esta página se recarga automáticamente</p></body></html>`)
   }
   const img = await QRCode.toDataURL(lastQR, { width: 300 })
-  res.send(`<html><body style="background:#111;display:flex;flex-direction:column;align-items:center;justify-content:center;height:100vh;margin:0"><p style="color:#fff;font-family:sans-serif;margin-bottom:16px">📱 WhatsApp → Dispositivos vinculados → Vincular dispositivo</p><img src="${img}" style="border-radius:12px"/><p style="color:#666;font-family:sans-serif;margin-top:12px;font-size:13px">El QR expira en ~20s. Si expira, recarga la página.</p></body></html>`)
+  res.send(`<html><body style="background:#111;display:flex;flex-direction:column;align-items:center;justify-content:center;height:100vh;margin:0"><p style="color:#fff;font-family:sans-serif;margin-bottom:16px">📱 WhatsApp → Dispositivos vinculados → Vincular dispositivo</p><img src="${img}" style="border-radius:12px"/><p style="color:#666;font-family:sans-serif;margin-top:12px;font-size:13px">El QR expira en ~20s. Si expira, recarga.</p></body></html>`)
 })
 
 app.post('/blast', async (req, res) => {
@@ -181,5 +184,7 @@ app.post('/blast', async (req, res) => {
   })()
 })
 
-app.listen(PORT, () => console.log(`✓ API en puerto ${PORT}`))
+// Servidor HTTP para mantener vivo en Render
+const server = http.createServer(app)
+server.listen(PORT, () => console.log(`✓ API en puerto ${PORT}`))
 connectWA()
