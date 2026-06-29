@@ -8,7 +8,10 @@ const SUPABASE_URL = process.env.SUPABASE_URL
 const SUPABASE_KEY = process.env.SUPABASE_KEY
 const PORT = process.env.PORT || 3000
 
-const supabase = createClient(SUPABASE_URL, SUPABASE_KEY)
+const ws = require('ws')
+const supabase = createClient(SUPABASE_URL, SUPABASE_KEY, {
+  realtime: { transport: ws }
+})
 const app = express()
 app.use(express.json())
 
