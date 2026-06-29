@@ -17,7 +17,7 @@ app.use(express.json())
 const client = new Client({
   authStrategy: new LocalAuth({ dataPath: './session' }),
   puppeteer: {
-    executablePath: '/usr/bin/chromium',
+    executablePath: process.env.CHROMIUM_PATH || require('puppeteer-core').executablePath(),
     headless: true,
     args: [
       '--no-sandbox',
