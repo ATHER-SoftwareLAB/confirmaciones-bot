@@ -1,5 +1,5 @@
 [phases.setup]
-nixPkgs = ["chromium", "nss", "freetype", "harfbuzz", "dejavu_fonts"]
+nixPkgs = ["nodejs_20", "chromium", "nss", "freetype", "harfbuzz", "dejavu_fonts"]
 
 [phases.install]
 cmds = ["npm install"]
