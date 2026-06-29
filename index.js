@@ -151,7 +151,12 @@ app.post('/blast', async (req, res) => {
   ;(async () => {
     try {
       const { data: msg } = await supabase.from('mensajes').select('*').eq('tipo', tipo).maybeSingle()
-      if (!msg) return console.error('❌ No hay mensaje para', tipo)
+     if (!msg) {
+      console.error('❌ No hay mensaje para', tipo)
+      const { data: todos } = await supabase.from('mensajes').select('*')
+      console.log('Mensajes en DB:', JSON.stringify(todos))
+      return
+      }
 
       const campo = tipo === 'mensaje1' ? 'mensaje1_enviado' : 'mensaje2_enviado'
       const { data: invitados } = await supabase.from('invitados').select('*').eq(campo, false).order('nombre')
