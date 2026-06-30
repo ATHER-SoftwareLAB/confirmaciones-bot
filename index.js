@@ -97,8 +97,8 @@ async function connectWA() {
           if (msg.key.fromMe || msg.key.remoteJid?.includes('@g.us')) continue
           const texto = msg.message?.conversation || msg.message?.extendedTextMessage?.text || ''
           if (!texto) continue
-          const numero = (msg.key.remoteJid || msg.key.participant || '').replace('@s.whatsapp.net', '').replace('@lid', '') console.log('JID completo:', msg.key.remoteJid, '| senderPn:', msg.key.senderPn)
-          console.log(`📩 ${numero}: "${texto}"`)
+          const numero = (msg.key.remoteJid || msg.key.participant || '').replace('@s.whatsapp.net', '').replace('@lid', '')
+console.log('JID completo:', msg.key.remoteJid, '| senderPn:', msg.key.senderPn)
 
           const { data: inv } = await supabase.from('invitados').select('*').eq('telefono', numero).maybeSingle()
           if (!inv || !inv.mensaje2_enviado || inv.estado !== 'pendiente') continue
