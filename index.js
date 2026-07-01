@@ -11,7 +11,7 @@ const SUPABASE_URL = process.env.SUPABASE_URL
 const SUPABASE_KEY = process.env.SUPABASE_KEY
 const PORT = process.env.PORT || 3000
 const SESSION_PATH = process.env.SESSION_PATH || './session'
-const PANEL_URL = process.env.PANEL_URL || 'https://aes-confirmaciones.vercel.app'
+const PANEL_URL = process.env.PANEL_URL || 'https://confirmaciones-evento.vercel.app'
 
 if (!SUPABASE_URL || !SUPABASE_KEY) {
   console.error('❌ Faltan SUPABASE_URL y SUPABASE_KEY')
@@ -141,6 +141,18 @@ app.get('/qr', async (_, res) => {
   }
   const img = await QRCode.toDataURL(lastQR, { width: 300 })
   res.send(`<html><body style="background:#111;display:flex;flex-direction:column;align-items:center;justify-content:center;height:100vh;margin:0"><p style="color:#fff;font-family:sans-serif;margin-bottom:16px">📱 WhatsApp → Dispositivos vinculados → Vincular dispositivo</p><img src="${img}" style="border-radius:12px"/><p style="color:#666;font-family:sans-serif;margin-top:12px;font-size:13px">El QR expira en ~20s. Si expira, recarga.</p></body></html>`)
+})
+
+app.post('/send/text', async (req, res) => {
+  if (!isConnected) return res.status(503).json({ error: 'WhatsApp no conectado' })
+  const { telefono, mensaje } = req.body
+  if (!telefono || !mensaje) return res.status(400).json({ error: 'Faltan datos' })
+  try {
+    await sock.sendMessage(`${telefono}@s.whatsapp.net`, { text: mensaje })
+    res.json({ ok: true })
+  } catch (e) {
+    res.status(500).json({ error: e.message })
+  }
 })
 
 app.post('/blast', async (req, res) => {
