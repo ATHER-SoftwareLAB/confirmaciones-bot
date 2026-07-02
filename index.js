@@ -149,7 +149,10 @@ app.post('/send/text', async (req, res) => {
   const { telefono, mensaje } = req.body
   if (!telefono || !mensaje) return res.status(400).json({ error: 'Faltan datos' })
   try {
-    await sock.sendMessage(`${telefono}@s.whatsapp.net`, { text: mensaje })
+    const jid = `${telefono}@s.whatsapp.net`
+    console.log('Enviando a:', jid)
+    const result = await sock.sendMessage(jid, { text: mensaje })
+    console.log('Resultado:', JSON.stringify(result?.status))
     res.json({ ok: true })
   } catch (e) {
     res.status(500).json({ error: e.message })
