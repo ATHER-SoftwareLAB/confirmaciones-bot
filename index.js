@@ -144,6 +144,7 @@ app.get('/qr', async (_, res) => {
 })
 
 app.post('/send/text', async (req, res) => {
+  console.log('📲 /send/text llamado:', req.body)
   if (!isConnected) return res.status(503).json({ error: 'WhatsApp no conectado' })
   const { telefono, mensaje } = req.body
   if (!telefono || !mensaje) return res.status(400).json({ error: 'Faltan datos' })
