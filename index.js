@@ -11,7 +11,7 @@ const SUPABASE_URL = process.env.SUPABASE_URL
 const SUPABASE_KEY = process.env.SUPABASE_KEY
 const PORT = process.env.PORT || 3000
 const SESSION_PATH = process.env.SESSION_PATH || './session'
-const PANEL_URL = process.env.PANEL_URL || 'https://confirmaciones-evento.vercel.app'
+const PANEL_URL = process.env.PANEL_URL || 'https://aes-confirmaciones.vercel.app'
 
 if (!SUPABASE_URL || !SUPABASE_KEY) {
   console.error('❌ Faltan SUPABASE_URL y SUPABASE_KEY')
